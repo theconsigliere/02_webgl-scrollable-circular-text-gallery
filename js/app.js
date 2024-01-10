@@ -4,6 +4,8 @@ import {
   uniforms,
 } from "three-msdf-text-utils"
 import * as THREE from "three"
+import textFragment from "./shader/text-fragment.glsl"
+import textVertex from "./shader/text-vertex.glsl"
 import fragment from "./shader/fragment.glsl"
 import vertex from "./shader/vertex.glsl"
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
@@ -25,18 +27,50 @@ const TEXTS = [
   "Iridescent",
   "Tranquility",
   "Luminescence",
+  "Serendipity",
+  "Solitude",
+  "Ethereal",
+  "Limerence",
+  "Supine",
+  "Aurora",
+  "Epiphany",
+  "Iridescent",
+  "Tranquility",
+  "Luminescence",
 ]
 
 export default class Sketch {
   constructor(options) {
+    this.gui = new GUI()
     this.scene = new THREE.Scene()
+
+    // second scene
+    this.sceneCopy = new THREE.Scene()
+    this.groupCopy = new THREE.Group()
+    this.sceneCopy.add(this.groupCopy)
+
+    // text group
     this.group = new THREE.Group()
     this.scene.add(this.group)
+
+    // plane group
+    this.planeGroup = new THREE.Group()
+    this.scene.add(this.planeGroup)
+
+    this.imageTextures = [...document.querySelectorAll("img")]
+
+    this.imageTextures = this.imageTextures.map((texture) =>
+      new THREE.TextureLoader().load(texture.src)
+    )
 
     this.container = options.dom
     this.width = this.container.offsetWidth
     this.height = this.container.offsetHeight
-    this.renderer = new THREE.WebGLRenderer()
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+    })
+    this.renderer.autoClear = false
     this.renderer.setPixelRatio(window.devicePixelRatio)
     this.renderer.setSize(this.width, this.height)
     this.renderer.setClearColor(0xeeeeee, 1)
@@ -47,9 +81,10 @@ export default class Sketch {
     this.scroller = new VirtualScroll()
     this.position = 0
     this.speed = 0
+    this.targetSpeed = 0
     this.scroller.on((event) => {
       // wrapper.style.transform = `translateY(${event.y}px)`
-      this.position = event.y / 4000
+      this.position = event.y / 2000
       this.speed = event.deltaY / 2000
     })
 
@@ -69,7 +104,7 @@ export default class Sketch {
 
     this.isPlaying = true
 
-    // this.addObjects()
+    this.addObjects()
     this.addTexts()
     this.resize()
     this.render()
@@ -119,163 +154,8 @@ export default class Sketch {
         // Strokes
         ...uniforms.strokes,
       },
-      vertexShader: `
-          // Attribute
-          attribute vec2 layoutUv;
-  
-          attribute float lineIndex;
-  
-          attribute float lineLettersTotal;
-          attribute float lineLetterIndex;
-  
-          attribute float lineWordsTotal;
-          attribute float lineWordIndex;
-  
-          attribute float wordIndex;
-  
-          attribute float letterIndex;
-  
-          // Varyings
-          varying vec2 vUv;
-          varying vec2 vLayoutUv;
-          varying vec3 vViewPosition;
-          varying vec3 vNormal;
-  
-          varying float vLineIndex;
-  
-          varying float vLineLettersTotal;
-          varying float vLineLetterIndex;
-  
-          varying float vLineWordsTotal;
-          varying float vLineWordIndex;
-  
-          varying float vWordIndex;
-  
-          varying float vLetterIndex;
-
-
-          mat4 rotationMatrix(vec3 axis, float angle) {
-            axis = normalize(axis);
-            float s = sin(angle);
-            float c = cos(angle);
-            float oc = 1.0 - c;
-            
-            return mat4(oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,  0.0,
-                        oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,  0.0,
-                        oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c,           0.0,
-                        0.0,                                0.0,                                0.0,                                1.0);
-        }
-        
-        vec3 rotate(vec3 v, vec3 axis, float angle) {
-          mat4 m = rotationMatrix(axis, angle);
-          return (m * vec4(v, 1.0)).xyz;
-        }
-
-        uniform float uSpeed;
-  
-          void main() {
-
-  
-              // Varyings
-              vUv = uv;
-              vLayoutUv = layoutUv;
-        
-              vNormal = normal;
-  
-              vLineIndex = lineIndex;
-  
-              vLineLettersTotal = lineLettersTotal;
-              vLineLetterIndex = lineLetterIndex;
-  
-              vLineWordsTotal = lineWordsTotal;
-              vLineWordIndex = lineWordIndex;
-  
-              vWordIndex = wordIndex;
-  
-              vLetterIndex = letterIndex;
-
-              // Output
-              vec3 newpos = position;
-
-              // use rotate function
-              newpos = rotate(newpos, vec3(1., 0., 1.), 0.5);
-
-              vec4 mvPosition = vec4(newpos, 1.0);
-              mvPosition = modelViewMatrix * mvPosition;
-              gl_Position = projectionMatrix * mvPosition;
-
-              vViewPosition = -mvPosition.xyz;
-          }
-      `,
-      fragmentShader: `
-          // Varyings
-          varying vec2 vUv;
-  
-          // Uniforms: Common
-          uniform float uOpacity;
-          uniform float uThreshold;
-          uniform float uAlphaTest;
-          uniform vec3 uColor;
-          uniform sampler2D uMap;
-  
-          // Uniforms: Strokes
-          uniform vec3 uStrokeColor;
-          uniform float uStrokeOutsetWidth;
-          uniform float uStrokeInsetWidth;
-  
-          // Utils: Median
-          float median(float r, float g, float b) {
-              return max(min(r, g), min(max(r, g), b));
-          }
-  
-          void main() {
-              // Common
-              // Texture sample
-              vec3 s = texture2D(uMap, vUv).rgb;
-  
-              // Signed distance
-              float sigDist = median(s.r, s.g, s.b) - 0.5;
-  
-              float afwidth = 1.4142135623730951 / 2.0;
-  
-              #ifdef IS_SMALL
-                  float alpha = smoothstep(uThreshold - afwidth, uThreshold + afwidth, sigDist);
-              #else
-                  float alpha = clamp(sigDist / fwidth(sigDist) + 0.5, 0.0, 1.0);
-              #endif
-  
-              // Strokes
-              // Outset
-              float sigDistOutset = sigDist + uStrokeOutsetWidth * 0.5;
-  
-              // Inset
-              float sigDistInset = sigDist - uStrokeInsetWidth * 0.5;
-  
-              #ifdef IS_SMALL
-                  float outset = smoothstep(uThreshold - afwidth, uThreshold + afwidth, sigDistOutset);
-                  float inset = 1.0 - smoothstep(uThreshold - afwidth, uThreshold + afwidth, sigDistInset);
-              #else
-                  float outset = clamp(sigDistOutset / fwidth(sigDistOutset) + 0.5, 0.0, 1.0);
-                  float inset = 1.0 - clamp(sigDistInset / fwidth(sigDistInset) + 0.5, 0.0, 1.0);
-              #endif
-  
-              // Border
-              float border = outset * inset;
-  
-              // Alpha Test
-              if (alpha < uAlphaTest) discard;
-  
-              // Output: Common
-              vec4 filledFragColor = vec4(uColor, uOpacity * alpha);
-  
-              // Output: Strokes
-              vec4 strokedFragColor = vec4(uStrokeColor, uOpacity * border);
-  
-              gl_FragColor = filledFragColor;
-
-              gl_FragColor = vec4(1.,0.,0.,1.);
-          }
-      `,
+      vertexShader: textVertex,
+      fragmentShader: textFragment,
     })
 
     Promise.all([loadFontAtlas(atlasURL)]).then(([atlas]) => {
@@ -291,9 +171,11 @@ export default class Sketch {
         const mesh = new THREE.Mesh(geometry, this.material)
         let textScale = 0.005
         mesh.scale.set(textScale, -textScale, textScale)
-        mesh.position.x = -0.5
+        mesh.position.x = -0.9
         mesh.position.y = this.size * i
+
         this.group.add(mesh)
+        this.groupCopy.add(mesh.clone())
       })
     })
 
@@ -307,31 +189,74 @@ export default class Sketch {
     }
   }
 
-  // addObjects() {
-  //   let that = this
-  //   this.material = new THREE.ShaderMaterial({
-  //     extensions: {
-  //       derivatives: "#extension GL_OES_standard_derivatives : enable",
-  //     },
-  //     side: THREE.DoubleSide,
-  //     uniforms: {
-  //       time: { type: "f", value: 0 },
-  //       resolution: { type: "v4", value: new THREE.Vector4() },
-  //       uvRate1: {
-  //         value: new THREE.Vector2(1, 1),
-  //       },
-  //     },
-  //     // wireframe: true,
-  //     // transparent: true,
-  //     vertexShader: vertex,
-  //     fragmentShader: fragment,
-  //   })
+  addObjects() {
+    let that = this
+    this.planeMaterial = new THREE.ShaderMaterial({
+      extensions: {
+        derivatives: "#extension GL_OES_standard_derivatives : enable",
+      },
+      side: THREE.DoubleSide,
+      uniforms: {
+        time: { type: "f", value: 0 },
+        uTexture: { value: this.imageTextures[0] },
+        resolution: { type: "v4", value: new THREE.Vector4() },
+      },
+      // wireframe: true,
+      // transparent: true,
+      vertexShader: vertex,
+      fragmentShader: fragment,
+    })
 
-  //   this.geometry = new THREE.PlaneGeometry(1, 1, 1, 1)
+    console.log(this.imageTextures[0].src)
 
-  //   this.plane = new THREE.Mesh(this.geometry, this.material)
-  //   this.scene.add(this.plane)
-  // }
+    this.planeGeometry = new THREE.PlaneGeometry(
+      1.77 / 3,
+      1 / 3,
+      30,
+      30
+    ).translate(0, 0, 1)
+    let pos = this.planeGeometry.attributes.position.array
+    let newPos = []
+    let radius = 1.2
+
+    for (let i = 0; i < pos.length; i += 3) {
+      let x = pos[i]
+      let y = pos[i + 1]
+      let z = pos[i + 2]
+
+      // make plane rounded
+      // let xz = new THREE.Vector2(x, z).normalize().multiplyScalar(radius)
+      // newPos.push(xz.x, y, xz.y)
+
+      // plane rounded around sphere
+      let xyz = new THREE.Vector3(x, y, z).normalize().multiplyScalar(radius)
+      newPos.push(xyz.x, xyz.y, xyz.z)
+    }
+
+    // sphere to show how plane follows the sphere
+    let sphereMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(radius, 32, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        wireframe: true,
+      })
+    )
+
+    this.scene.add(sphereMesh)
+
+    // turn sphereMesh off using GUI
+
+    this.gui.add(sphereMesh, "visible").name("Sphere")
+
+    // push position coordinates to the geometry
+    this.planeGeometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(newPos, 3)
+    )
+
+    this.plane = new THREE.Mesh(this.planeGeometry, this.planeMaterial)
+    this.planeGroup.add(this.plane)
+  }
 
   stop() {
     this.isPlaying = false
@@ -344,15 +269,41 @@ export default class Sketch {
     }
   }
 
+  updateTexture() {
+    // update the texture based on the scroll position
+    let index = Math.round(this.position + 10000) % this.imageTextures.length
+    this.planeMaterial.uniforms.uTexture.value = this.imageTextures[index]
+
+    // set active text of the copy group to be set in front of plane
+    this.groupCopy.children.forEach((mesh, i) => {
+      if (i !== index) {
+        mesh.visible = false
+      } else {
+        mesh.visible = true
+      }
+    })
+  }
+
   render() {
     if (!this.isPlaying) return
     this.time += 0.05
     this.speed *= 0.9
-    this.material.uniforms.uSpeed.value = this.speed
+
+    this.updateTexture()
+    // smoothing the speed
+    this.targetSpeed += (this.speed - this.targetSpeed) * 0.1
+    this.material.uniforms.uSpeed.value = this.targetSpeed
     // this.material.uniforms.time.value = this.time
-    this.group.position.y = -this.position
+    this.group.position.y = -this.position * this.size - 0.1
+    this.groupCopy.position.y = -this.position * this.size - 0.1
+    // Every text scrolled past move th eplan around the circle hence 2 * Math.PI = full circle rotation
+    this.planeGroup.rotation.y = this.position * 2 * Math.PI
+    // scroll plane around the middle of the screen but change angle based on scroll position
+    this.planeGroup.rotation.z = 0.2 * Math.sin(this.position * 0.5)
     requestAnimationFrame(this.render.bind(this))
     this.renderer.render(this.scene, this.camera)
+    this.renderer.clearDepth()
+    this.renderer.render(this.sceneCopy, this.camera)
   }
 }
 
